@@ -1,0 +1,4 @@
+klassenbuch.xlsx
+*.xlsx
+site/
+__pycache__/

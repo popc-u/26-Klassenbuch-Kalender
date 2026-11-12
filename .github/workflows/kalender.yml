@@ -1,0 +1,101 @@
+name: Klassenbuch-Kalender
+
+on:
+  schedule:
+    - cron: "7 * * * *"        # jede Stunde (Minute 7, Zeit in UTC)
+  workflow_dispatch:            # "Run workflow" = sofort aktualisieren
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write                # nur für "Zeitplan aktiv halten"
+
+concurrency:
+  group: klassenbuch-kalender
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.build.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: Klassenbuch von SharePoint laden
+        id: fetch
+        env:
+          SHAREPOINT_URL: ${{ secrets.SHAREPOINT_URL }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if python fetch_klassenbuch.py klassenbuch.xlsx; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            # Fehler höchstens einmal pro Tag melden (sonst kommt jede Stunde eine Mail),
+            # manuelle Läufe und Pushes immer.
+            if [ "$EVENT" != "schedule" ] || [ "$(date -u +%H)" = "06" ]; then
+              exit 1
+            fi
+            echo "::warning::Download fehlgeschlagen – der Kalender bleibt auf dem letzten Stand."
+          fi
+
+      - name: GitHub Pages vorbereiten
+        id: pages
+        if: steps.fetch.outputs.ok == 'true'
+        uses: actions/configure-pages@v6
+
+      - name: Kalenderdateien erzeugen
+        id: build
+        if: steps.fetch.outputs.ok == 'true'
+        env:
+          SHAREPOINT_URL: ${{ secrets.SHAREPOINT_URL }}
+          FEED_TOKEN: ${{ secrets.FEED_TOKEN }}
+          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+          FORCE: ${{ github.event_name != 'schedule' }}
+        run: python build_site.py klassenbuch.xlsx site
+
+      - name: Seite hochladen
+        if: steps.build.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          retention-days: 1
+
+      - name: Zeitplan aktiv halten
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub pausiert Zeitpläne in öffentlichen Repositories nach 60 Tagen ohne
+          # Aktivität. Ein "enable"-Aufruf setzt diesen Zähler zurück (einmal pro Tag).
+          if [ "$(date -u +%H)" = "03" ]; then
+            gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/kalender.yml/enable" \
+              && echo "Zeitplan bestätigt." \
+              || echo "::warning::Zeitplan konnte nicht bestätigt werden."
+          fi
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Auf GitHub Pages veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v5
