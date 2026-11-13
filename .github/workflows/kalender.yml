@@ -55,11 +55,31 @@ jobs:
       - name: GitHub Pages vorbereiten
         id: pages
         if: steps.fetch.outputs.ok == 'true'
+        continue-on-error: true
         uses: actions/configure-pages@v6
+
+      - name: Prüfen, ob GitHub Pages eingeschaltet ist
+        id: pagescheck
+        if: steps.fetch.outputs.ok == 'true'
+        env:
+          OUTCOME: ${{ steps.pages.outcome }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          msg="GitHub Pages ist ausgeschaltet: Settings → Pages → Source auf 'GitHub Actions' stellen."
+          if [ "$EVENT" != "schedule" ] || [ "$(date -u +%H)" = "06" ]; then
+            echo "::error::$msg"
+            exit 1
+          fi
+          echo "::warning::$msg"
 
       - name: Kalenderdateien erzeugen
         id: build
-        if: steps.fetch.outputs.ok == 'true'
+        if: steps.pagescheck.outputs.ok == 'true'
         env:
           SHAREPOINT_URL: ${{ secrets.SHAREPOINT_URL }}
           FEED_TOKEN: ${{ secrets.FEED_TOKEN }}
