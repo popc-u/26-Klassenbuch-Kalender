@@ -48,6 +48,8 @@ def main() -> int:
     xlsx, site = sys.argv[1], Path(sys.argv[2])
     token = feed_token()
     print(f"::add-mask::{token}", flush=True)
+    # Fingerabdruck (verrät den Token nicht), um die Adresse prüfen zu können
+    print(f"::notice::Feed-Fingerabdruck {hashlib.sha256(token.encode()).hexdigest()[:8]}", flush=True)
 
     if site.exists():
         shutil.rmtree(site)
